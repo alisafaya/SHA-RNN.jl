@@ -1,8 +1,8 @@
 using Base.Iterators, IterTools
 
 struct Vocab
-    w2i::Dict{String,Int}
-    i2w::Vector{String}
+    v2i::Dict{String,Int}
+    i2v::Vector{String}
     unk::Int
     eos::Int
     tokenizer
@@ -16,19 +16,19 @@ function Vocab(file::String; tokenizer=split, vocabsize=Inf, mincount=1, unk="<u
     # create vocab set and count occurrences
     for l in eachline(file)
         tokens = tokenizer(l)
-        map(w -> cdict[w] = get!(cdict, w, 0) + 1, tokens)
+        map(v -> cdict[v] = get!(cdict, v, 0) + 1, tokens)
     end
     
-    # select words with frequency higher than mincount
+    # select vocabs with frequency higher than mincount
     # sort by frequency and delete if vocabsize is determined
-    fsorted = sort([ (w, c) for (w, c) in cdict if c >= mincount ], by = x -> x[2], rev = true)
+    fsorted = sort([ (v, c) for (v, c) in cdict if c >= mincount ], by = x -> x[2], rev = true)
     
     vocabsize == Inf || (fsorted = fsorted[1:vocabsize])
 
-    i2w = [ eos; unk; [ x[1] for x in fsorted[3:end] ] ]
-    w2i = Dict( w => i for (i, w) in enumerate(i2w))                
+    i2v = [ eos; unk; [ x[1] for x in fsorted[3:end] ] ]
+    v2i = Dict( v => i for (i, v) in enumerate(i2v))                
     
-    return Vocab(w2i, i2w, w2i[unk], w2i[eos], tokenizer)
+    return Vocab(v2i, i2v, v2i[unk], v2i[eos], tokenizer)
 end
                 
 struct TextReader
@@ -39,24 +39,33 @@ end
 function Base.iterate(r::TextReader, s=nothing)
     s === nothing && (s = open(r.file))
     eof(s) && return close(s)
-    return [ get(r.vocab.w2i, w, r.vocab.unk) for w in r.vocab.tokenizer(readline(s))], s
+    return [ get(r.vocab.v2i, v, r.vocab.unk) for v in r.vocab.tokenizer(readline(s))], s
 end
                 
 Base.IteratorSize(::Type{TextReader}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{TextReader}) = Base.HasEltype()
 Base.eltype(::Type{TextReader}) = Vector{Int}
 
-function WordsData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
-                batchmajor = false, bucketwidth = 2, numbuckets = min(128, maxlength ÷ bucketwidth))
-    buckets = [ [] for i in 1:numbuckets ] # buckets[i] is an array of sentence pairs with similar length
-    WordsData(src, batchsize, maxlength, batchmajor, bucketwidth, buckets)
+struct VocabData
+    src::TextReader        
+    batchsize::Int         
+    maxlength::Int         
+    batchmajor::Bool       
+    bucketwidth::Int    
+    buckets::Vector        
 end
 
-Base.IteratorSize(::Type{WordsData}) = Base.SizeUnknown()
-Base.IteratorEltype(::Type{WordsData}) = Base.HasEltype()
-Base.eltype(::Type{WordsData}) = Array{Any,1}
+function VocabData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
+                batchmajor = false, bucketwidth = 2, numbuckets = min(128, maxlength ÷ bucketwidth))
+    buckets = [ [] for i in 1:numbuckets ] # buckets[i] is an array of sentence pairs with similar length
+    VocabData(src, batchsize, maxlength, batchmajor, bucketwidth, buckets)
+end
 
-function Base.iterate(d::WordsData, state=nothing)
+Base.IteratorSize(::Type{VocabData}) = Base.SizeUnknown()
+Base.IteratorEltype(::Type{VocabData}) = Base.HasEltype()
+Base.eltype(::Type{VocabData}) = Array{Any,1}
+
+function Base.iterate(d::VocabData, state=nothing)
     if state == 0 # When file is finished but buckets are partially full 
         for i in 1:length(d.buckets)
             if length(d.buckets[i]) > 0
@@ -94,27 +103,26 @@ function Base.iterate(d::WordsData, state=nothing)
     end
 end
 
-function arraybatch(d::WordsData, bucket)
-    src_eow = d.src.charset.eow
+function arraybatch(d::VocabData, bucket)
+    src_eos = d.src.vocab.eos
     src_lengths = map(x -> length(x), bucket)
     max_length = max(src_lengths...)
     x = zeros(Int64, length(bucket), d.maxlength + 1) # default d.batchmajor is false
 
     for (i, v) in enumerate(bucket)
-        to_be_added = fill(src_eow, d.maxlength - length(v))
-        x[i,:] = [src_eow; v; to_be_added]
+        to_be_added = fill(src_eos, d.maxlength - length(v))
+        x[i,:] = [src_eos; v; to_be_added]
     end
     
     d.batchmajor && (x = x')
-    return (x[:, 1:end-1], x[:, 2:end]) # to calculate nll on generators output directly
+    return (x[:, 1:end-1], x[:, 2:end])
 end
 
-function readwordset(fname)
-    words = []
-    fi = open(fname)
-    while !eof(fi)
-        push!(words, readline(fi))
-    end
-    close(fi)
-    words
+# Utility to convert int arrays to sentence strings
+function int2string(y, vocab::Vocab)
+    y = vec(y)
+    ysos = findnext(w->!isequal(w, vocab.eos), y, 1)
+    ysos === nothing && return ""
+    yeos = something(findnext(isequal(vocab.eos), y, ysos), 1+length(y))
+    join(vocab.i2v[y[ysos:yeos-1]], " ")
 end
