@@ -32,13 +32,13 @@ struct SimpleLSTMModel
 end
 
 # Language model initializer
-function SimpleLSTMModel(hidden::Int, embsz::Int, vocab::Vocab; layers=1, dropout=0)
+function SimpleLSTMModel(embsz::Int, hidden::Int, vocab::Vocab; layers=1, dropout=0)
     
     embed = Embed(length(vocab.i2v), embsz)
     rnn = RNN(embsz, hidden; bidirectional=false, numLayers=layers, dropout=dropout)
-    projection = Linear(hidden, length(vocab.i2c))
+    projection = Linear(hidden, length(vocab.i2v))
     
-    LModel(embed, rnn, projection, dropout, vocab)
+    SimpleLSTMModel(embed, rnn, projection, dropout, vocab)
 end
 
 function mask(a, pad)
@@ -66,7 +66,7 @@ function (s::SimpleLSTMModel)(src, tgt; average=true)
     nll(scores, mask(tgt, s.vocab.eos); dims=1, average=average)
 end
 
-# per-word loss (in this case per-batch loss)
+# per-line loss (in this case per-batch loss)
 function loss(model, data; average=true)
     l = 0
     n = 0
@@ -87,8 +87,8 @@ function generate(s::SimpleLSTMModel; start="", del=" ", maxlength=30)
     vocabs = fill(s.vocab.eos, 1)
     
     starting_index = 1
-    for i in 1:s.vocab.tokenizer(start)
-        push!(vocabs, s.vocab.v2i[start[i]])
+    for (i, t) in enumerate(s.vocab.tokenizer(start))
+        push!(vocabs, s.vocab.v2i[t])
         embed = s.embed(vocabs[i:i])
         rnn_out = s.rnn(embed)
         starting_index += 1
@@ -98,7 +98,7 @@ function generate(s::SimpleLSTMModel; start="", del=" ", maxlength=30)
         embed = s.embed(vocabs[i:i])
         rnn_out = s.rnn(embed)
         output = s.projection(dropout(rnn_out, s.dropout))
-        push!(vocabs, s.vocab.v2i[ sample(s.srccharset.i2c, Weights(Array(softmax(reshape(output, length(s.vocab.i2v)))))) ] )
+        push!(vocabs, s.vocab.v2i[ sample(s.vocab.i2v, Weights(Array(softmax(reshape(output, length(s.vocab.i2v)))))) ] )
         
         if vocabs[end] == s.vocab.eos
             break
@@ -120,6 +120,4 @@ function train!(model, trn, dev, tst...)
         (dev=devloss, tst=tstloss, mem=Float32(CuArrays.usage[]))
     end
     return bestmodel
-end
-
-
+end;

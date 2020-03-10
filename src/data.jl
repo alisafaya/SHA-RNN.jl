@@ -47,31 +47,32 @@ Base.IteratorEltype(::Type{TextReader}) = Base.HasEltype()
 Base.eltype(::Type{TextReader}) = Vector{Int}
 
 struct VocabData
-    src::TextReader        
-    batchsize::Int         
-    maxlength::Int         
-    batchmajor::Bool       
-    bucketwidth::Int    
-    buckets::Vector        
+    src::TextReader        # reader for text data
+    batchsize::Int         # desired batch size
+    maxlength::Int         # skip if source sentence above maxlength
+    batchmajor::Bool       # batch dims (B,T) if batchmajor=false (default) or (T,B) if true.
+    bucketwidth::Int       # batch sentences with length within bucketwidth of each other
+    buckets::Vector        # sentences collected in separate arrays called buckets for each length range
+    batchmaker::Function   # function that turns a bucket into a batch.
 end
 
 function VocabData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
-                batchmajor = false, bucketwidth = 2, numbuckets = min(128, maxlength ÷ bucketwidth))
+                batchmajor = false, bucketwidth = 2, numbuckets = min(128, maxlength ÷ bucketwidth), batchmaker=arraybatch)
     buckets = [ [] for i in 1:numbuckets ] # buckets[i] is an array of sentence pairs with similar length
-    VocabData(src, batchsize, maxlength, batchmajor, bucketwidth, buckets)
+    VocabData(src, batchsize, maxlength, batchmajor, bucketwidth, buckets, batchmaker)
 end
 
 Base.IteratorSize(::Type{VocabData}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{VocabData}) = Base.HasEltype()
-Base.eltype(::Type{VocabData}) = Array{Any,1}
+Base.eltype(::Type{VocabData}) = Tuple{Array{Int64,2},Array{Int64,2}}
 
 function Base.iterate(d::VocabData, state=nothing)
-    if state == 0 # When file is finished but buckets are partially full 
+    if state == 0 # When file is finished but buckets are not empty yet 
         for i in 1:length(d.buckets)
             if length(d.buckets[i]) > 0
-                buc = d.buckets[i]
+                batch = d.batchmaker(d, d.buckets[i])
                 d.buckets[i] = []
-                return buc, state
+                return batch, state
             end
         end
         return nothing # Finish iteration
@@ -90,15 +91,16 @@ function Base.iterate(d::VocabData, state=nothing)
         src_length = length(src_word)
         
         (src_length > d.maxlength) && continue
+        (src_length < 1) && continue
 
         i = Int(ceil(src_length / d.bucketwidth))
         i > length(d.buckets) && (i = length(d.buckets))
 
         push!(d.buckets[i], src_word)
         if length(d.buckets[i]) == d.batchsize
-            buc = d.buckets[i]
+            batch = d.batchmaker(d, d.buckets[i])
             d.buckets[i] = []
-            return buc, state
+            return batch, state
         end
     end
 end
