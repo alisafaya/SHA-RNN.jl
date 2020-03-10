@@ -6,3 +6,11 @@ Stephan Merity. **Single Headed Attention RNN: Stop Thinking With Your Head**. _
 
 https://arxiv.org/abs/1911.11423v2
 
+
+## Data downloading and preprocessing
+
+```bash
+sh getdata.sh
+```
+
+
