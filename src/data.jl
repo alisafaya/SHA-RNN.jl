@@ -1,10 +1,10 @@
 using Base.Iterators, IterTools
 
 struct Vocab
-    v2i::Dict{String,Int}
+    v2i::Dict{String,Int16}
     i2v::Vector{String}
-    unk::Int
-    eos::Int
+    unk::Int16
+    eos::Int16
     tokenizer
 end
 
@@ -23,7 +23,7 @@ function Vocab(file::String; tokenizer=split, vocabsize=Inf, mincount=1, unk="<u
     # sort by frequency and delete if vocabsize is determined
     fsorted = sort([ (v, c) for (v, c) in cdict if c >= mincount ], by = x -> x[2], rev = true)
     
-    vocabsize == Inf || (fsorted = fsorted[1:vocabsize])
+    vocabsize == Inf || length(fsorted) < vocabsize || (fsorted = fsorted[1:vocabsize])
 
     i2v = [ eos; unk; [ x[1] for x in fsorted[3:end] ] ]
     v2i = Dict( v => i for (i, v) in enumerate(i2v))                
@@ -39,85 +39,75 @@ end
 function Base.iterate(r::TextReader, s=nothing)
     s === nothing && (s = open(r.file))
     eof(s) && return close(s)
-    return [ get(r.vocab.v2i, v, r.vocab.unk) for v in r.vocab.tokenizer(readline(s))], s
+    return [[ get(r.vocab.v2i, v, r.vocab.unk) for v in r.vocab.tokenizer(readline(s))] ; [ r.vocab.eos, ] ] , s
 end
                 
 Base.IteratorSize(::Type{TextReader}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{TextReader}) = Base.HasEltype()
-Base.eltype(::Type{TextReader}) = Vector{Int}
+Base.eltype(::Type{TextReader}) = Vector{Int16}
 
-struct VocabData
-    src::TextReader        # reader for text data
-    batchsize::Int         # desired batch size
-    maxlength::Int         # skip if source sentence above maxlength
-    batchmajor::Bool       # batch dims (B,T) if batchmajor=false (default) or (T,B) if true.
-    bucketwidth::Int       # batch sentences with length within bucketwidth of each other
-    buckets::Vector        # sentences collected in separate arrays called buckets for each length range
-    batchmaker::Function   # function that turns a bucket into a batch.
+mutable struct TextData
+    src::TextReader             # reader for text data
+    batchsize::Int              # desired batch size
+    batchmajor::Bool            # batch dims (B,T) if batchmajor=false (default) or (T,B) if true.
+    dataarray::Array{Int16, 2} # batchified data array for language modeling tasks
+    maxsize::Int                # max length of text to read
+    bptt::Int                   # how many steps to back propagate through time
 end
 
-function VocabData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
-                batchmajor = false, bucketwidth = 2, numbuckets = min(128, maxlength ÷ bucketwidth), batchmaker=arraybatch)
-    buckets = [ [] for i in 1:numbuckets ] # buckets[i] is an array of sentence pairs with similar length
-    VocabData(src, batchsize, maxlength, batchmajor, bucketwidth, buckets, batchmaker)
-end
+function TextData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
+                batchmajor = false, maxsize = typemax(Int), bptt = 1024)
+    datavector = Vector{Int16}()
+    nr = lb = length(datavector)
 
-Base.IteratorSize(::Type{VocabData}) = Base.SizeUnknown()
-Base.IteratorEltype(::Type{VocabData}) = Base.HasEltype()
-Base.eltype(::Type{VocabData}) = Tuple{Array{Int64,2},Array{Int64,2}}
+    for l in src
+        for i in l
+            nr += 1
+            if nr > lb
+                lb = nr * 2
+                resize!(datavector, lb)
+            end
 
-function Base.iterate(d::VocabData, state=nothing)
-    if state == 0 # When file is finished but buckets are not empty yet 
-        for i in 1:length(d.buckets)
-            if length(d.buckets[i]) > 0
-                batch = d.batchmaker(d, d.buckets[i])
-                d.buckets[i] = []
-                return batch, state
+            datavector[nr] = i
+            if nr > maxsize
+                datavector = resize!(datavector, maxsize)
+                @goto escape_label
             end
         end
-        return nothing # Finish iteration
+    end
+    @label escape_label
+    datavector = resize!(datavector, nr)
+    N = length(datavector) ÷ batchsize
+    batchified_dataarray = reshape(datavector[1:N * batchsize], N, batchsize)'
+    TextData(src, batchsize, batchmajor, batchified_dataarray, maxsize, bptt)
+end
+
+Base.IteratorSize(::Type{TextData}) = Base.SizeUnknown()
+Base.IteratorEltype(::Type{TextData}) = Base.HasEltype()
+Base.eltype(::Type{TextData}) = Tuple{Array{Int16,2},Array{Int16,2}}
+
+function Base.iterate(d::TextData, state=nothing)
+    if state === nothing
+        state = (1, d.bptt + 1) 
+    elseif state == 0
+        return nothing
     end
 
     while true
-        src_next = iterate(d.src, state)
-        
-        if src_next === nothing
-            state = 0
-            return iterate(d, state)
+        x = d.dataarray[:, state[1]:state[2]]        
+        (d.batchmajor) && (x = x')
+        batch = (x[:, 1:end-1], x[:, 2:end])
+
+        if state[1] + d.bptt >= size(d.dataarray, 2)
+            return batch, 0
+        elseif state[2] + d.bptt >= size(d.dataarray, 2)
+            state = (state[1] + d.bptt, size(d.dataarray, 2))
+        else
+            state = state .+ d.bptt
         end
-        
-        (src_word, src_state) = src_next
-        state = src_state
-        src_length = length(src_word)
-        
-        (src_length > d.maxlength) && continue
-        (src_length < 1) && continue
 
-        i = Int(ceil(src_length / d.bucketwidth))
-        i > length(d.buckets) && (i = length(d.buckets))
-
-        push!(d.buckets[i], src_word)
-        if length(d.buckets[i]) == d.batchsize
-            batch = d.batchmaker(d, d.buckets[i])
-            d.buckets[i] = []
-            return batch, state
-        end
+        return batch, state
     end
-end
-
-function arraybatch(d::VocabData, bucket)
-    src_eos = d.src.vocab.eos
-    src_lengths = map(x -> length(x), bucket)
-    max_length = max(src_lengths...)
-    x = zeros(Int64, length(bucket), d.maxlength + 1) # default d.batchmajor is false
-
-    for (i, v) in enumerate(bucket)
-        to_be_added = fill(src_eos, d.maxlength - length(v))
-        x[i,:] = [src_eos; v; to_be_added]
-    end
-    
-    d.batchmajor && (x = x')
-    return (x[:, 1:end-1], x[:, 2:end])
 end
 
 # Utility to convert int arrays to sentence strings

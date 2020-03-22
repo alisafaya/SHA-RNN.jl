@@ -10,7 +10,7 @@ if isfile("train.txt")
 else
     f = open("enwik8", "r");
     data = Array{UInt8, 1}()
-    readbytes!(f, data, typemax(Int))
+    readbytes!(f, data, typemax(Int));
     println("Length of enwik8: ", length(data));
     num_test_chars = 5000000;
 
@@ -20,12 +20,13 @@ else
 
     for (fn, part) in [("train.txt", train_data), ("valid.txt", valid_data), ("test.txt", test_data)]
         println(fn, " will have ", length(part), " bytes")
-        println("- Writing ", part, " ...")
-        write(fn * ".raw", part)
-        part_str = join(part, " ");
-        open(fn, "w") do f
-            write(f, part_str)
+        println("- Writing ", fn, " ...")
+        open(fn * ".raw", "w") do f
+            write(f, part);
         end;
-        # f = open(fn + '.raw', 'wb').write(part)
-    end
+        part_str = join([ ifelse((UInt8('\n') != c), string(c), "\n") for c in part ], " ");
+        open(fn, "w") do f
+            write(f, part_str);
+        end;
+    end;
 end;

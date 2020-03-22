@@ -23,8 +23,9 @@ docs/site/
 # environment.
 Manifest.toml
 data
-# Jupyter Notebook
+jld2
 .ipynb_checkpoints
+
 
 # IPython
 profile_default/
