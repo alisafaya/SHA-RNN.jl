@@ -82,6 +82,15 @@ function TextData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
     TextData(src, batchsize, batchmajor, batchified_dataarray, maxsize, bptt)
 end
 
+function changeBatchSize(d::TextData, newbatchsize::Int)
+    (B, N) = size(d.dataarray)
+    datavector = reshape(d.dataarray', N * B)
+    N = length(datavector) ÷ newbatchsize
+    d.dataarray = reshape(datavector[1:N * newbatchsize], N, newbatchsize)'
+    d.batchsize = newbatchsize
+    return newbatchsize
+end
+
 Base.IteratorSize(::Type{TextData}) = Base.SizeUnknown()
 Base.IteratorEltype(::Type{TextData}) = Base.HasEltype()
 Base.eltype(::Type{TextData}) = Tuple{Array{Int16,2},Array{Int16,2}}
