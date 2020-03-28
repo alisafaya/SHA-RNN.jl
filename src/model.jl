@@ -73,7 +73,7 @@ end
     Language model loss function
 """
 function (s::SimpleLSTMModel)(src, tgt; average=true)
-    s.rnn.h, s.rnn.c = 0, 0
+    s.rnn.h, s.rnn.c = value(s.rnn.h), value(s.rnn.c) 
     embed = s.embed(src)
     rnn_out = s.rnn(embed)
     dims = size(rnn_out)
