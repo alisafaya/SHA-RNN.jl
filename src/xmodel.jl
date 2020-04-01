@@ -40,4 +40,6 @@ function (s::XModel)(src, tgt; average=true)
     output = s.projection(dropout( rnn_out .+ s.boom(rnn_out) , s.dropout))
     scores = reshape(output, size(output, 1), dims[2], dims[3])
     nll(scores, tgt; dims=1, average=average)
-end
+end;
+
+nothing

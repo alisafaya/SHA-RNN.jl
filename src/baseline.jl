@@ -1,4 +1,4 @@
-using Knet, StatsBase, LinearAlgebra, CuArrays, Random
+using Knet, StatsBase, LinearAlgebra, Random
 
 include("data.jl")
 include("layers.jl")
@@ -33,6 +33,7 @@ function SimpleLSTMModel(embsz::Int, hidden::Int, vocab::Vocab; layers=1, dropou
     embed = Embed(length(vocab.i2v), embsz)
     rnn = RNN(embsz, hidden; bidirectional=false, numLayers=layers, dropout=dropout)
     projection = Linear(hidden, length(vocab.i2v))
+    rnn.h, rnn.c = 0, 0
     
     SimpleLSTMModel(embed, rnn, projection, dropout, vocab)
 end
@@ -76,3 +77,5 @@ function generate(s::SimpleLSTMModel; start="", del="", maxlength=30)
     end
     join([ Char(parse(UInt8, s.vocab.i2v[i])) for i in vocabs[2:end-1] ], del)
 end
+
+nothing

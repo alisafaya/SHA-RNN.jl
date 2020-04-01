@@ -36,3 +36,4 @@ function SHARNN(embsz::Int, hidden::Int, vocab::Vocab; layers=1, dropout=0, tie_
     # return model
 end
 
+nothing

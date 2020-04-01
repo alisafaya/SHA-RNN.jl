@@ -82,7 +82,7 @@ function TextData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
     TextData(src, batchsize, batchmajor, batchified_dataarray, maxsize, bptt)
 end
 
-function changeBatchSize(d::TextData, newbatchsize::Int)
+function changebatchsize!(d::TextData, newbatchsize::Int)
     (B, N) = size(d.dataarray)
     datavector = reshape(d.dataarray', N * B)
     N = length(datavector) ÷ newbatchsize
@@ -126,4 +126,6 @@ function int2string(y, vocab::Vocab)
     ysos === nothing && return ""
     yeos = something(findnext(isequal(vocab.eos), y, ysos), 1+length(y))
     join(vocab.i2v[y[ysos:yeos-1]], " ")
-end
+end;
+
+nothing

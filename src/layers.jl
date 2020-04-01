@@ -22,22 +22,23 @@ function (l::Linear)(x)
 end
 
 
-"""
-    gelu(x)
+# # No need for this implementation anymore, since I added it as primitive operation to Knet
+# """
+#     gelu(x)
     
-    Gaussian Error Linear Unit Activation Function
-    https://arxiv.org/abs/1606.08415
+#     Gaussian Error Linear Unit Activation Function
+#     https://arxiv.org/abs/1606.08415
 
-    returns: 
-        x * sigm(1.702 * x)
+#     returns: 
+#         x * sigm(1.702 * x)
+# """
+# function gelu(x)
+#     return x * sigm(1.702 * x)
+# end
+
+
 """
-function gelu(x)
-    return x * sigm(1.702 * x)
-end
-
-
-"""
-    Boom Layer as it named by the author of SHA-RNN
+    Boom Layer
 """
 struct Boom
     lin1
@@ -184,3 +185,5 @@ end
 struct Block
     
 end
+
+nothing
