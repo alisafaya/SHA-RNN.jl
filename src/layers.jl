@@ -1,5 +1,7 @@
 using Knet
 
+mmul(w,x) = (w == 1 ? x : w == 0 ? 0 : reshape(w * reshape(x,size(x,1),:), (:, size(x)[2:end]...)))
+
 struct Embed; w; end
 
 function Embed(vocabsize::Int, embedsize::Int)
@@ -10,7 +12,6 @@ function (l::Embed)(x)
     l.w[:, x]
 end
 
-
 struct Linear; w; b; end
 
 function Linear(inputsize::Int, outputsize::Int)
@@ -18,23 +19,22 @@ function Linear(inputsize::Int, outputsize::Int)
 end
 
 function (l::Linear)(x)
-    l.w * x .+ l.b
+    mmul(l.w, x)
 end
 
 
-# # No need for this implementation anymore, since I added it as primitive operation to Knet
-# """
-#     gelu(x)
+"""
+    gelu(x)
     
-#     Gaussian Error Linear Unit Activation Function
-#     https://arxiv.org/abs/1606.08415
+    Gaussian Error Linear Unit Activation Function
+    https://arxiv.org/abs/1606.08415
 
-#     returns: 
-#         x * sigm(1.702 * x)
-# """
-# function gelu(x)
-#     return x * sigm(1.702 * x)
-# end
+    returns: 
+        x * sigm(1.702 * x)
+"""
+function gelu(x)
+    return x * sigm(1.702 * x)
+end
 
 
 """
@@ -84,14 +84,13 @@ struct Overparam
 end
 
 function Overparam(nhid)
-    Overparam(Linear(nhid, 2nhid), nhid)
+    Overparam(Linear(nhid, nnhid), nhid)
 end
 
 function (o::Overparam)(x)
     x = o.linear(x)
     tanh.(x[1:o.nhid, :]) .* sigm.(x[o.nhid+1:end, :])
 end
-
 
 struct Attention
     q
@@ -110,80 +109,37 @@ end
 function Attention(nhid; q=true, k=false, v=false, heads=1, dropout=0)
     @assert nhid % heads == 0 "Heads must divide vector evenly"
     
-    q = ifelse(q, Linear(nhid, nhid), false)
-    k = ifelse(k, Linear(nhid, nhid), false)
-    v = ifelse(v, Linear(nhid, nhid), false)
-    qs = param0(1, 1, nhid)
-    ks = param0(1, 1, nhid)
-    vs = param0(1, 1, nhid)
+    q = q ? Linear(nhid, nhid) : false
+    k = k ? Linear(nhid, nhid) : false
+    v = v ? Linear(nhid, nhid) : false
+    qs = param0(nhid)
+    ks = param0(nhid)
+    vs = param0(nhid)
     vq = Overparam(nhid)
 
-    Overparam(q, k, v, qs, ks, vs, vq, heads, nhid, dropout, false)
+    Attention(q, k, v, qs, ks, vs, vq, heads, nhid, dropout, false)
 end
 
-"""
-bmm(A, B ; transA=false, transB=false)
 
-Perform a batch matrix-matrix product of matrices stored in A and B. size(A,2) ==
-size(B,1) and size(A)[3:end] and size(B)[3:end] must match. If A is a (m,n,b...)
-tensor, B is a (n,k,b...) tensor, and the output is a (m,k,b...) tensor.
-"""
+function (a::Attention)(query, key, value; attn_mask=false, args...)
+    qs, ks, vs = sigm.(a.qs), sigm.(a.ks), sigm.(a.vs)
+    # over parameterization vs = a.vq(vs)
+    
+    query = a.q !== false ? a.q(query) : query # add LayerNorm. for query here
+    key = a.k !== false ? a.k(key) : key
+    value = a.v !== false ? a.v(value) : value
 
-function attention(q, k, v, dropout)
-    # q size = (batch, heads, seqlen, hid)
-    (bsz, heads, qlen, dim) = size(q)
-    klen = size(k, 3)
-    # attention_scores = torch.matmul(query, key.transpose(-1, -2).contiguous()) / math.sqrt(dim)
-end
-
-function Attention(q, k, v,)
-
-end
-# def forward(self, query, key, value, attn_mask=None, batch_first=False, **kwargs):
-#     qs, ks, vs = torch.sigmoid(self.qs), torch.sigmoid(self.ks), torch.sigmoid(self.vs)
-#     if self.vq:
-#         vs = self.vq(vs)
-#     elif self.vq_collapsed:
-#         vs = self.vs
-#     if self.q:
-#         query = self.q(query)
-#         query = self.qln(query.float())
-#     if self.k: key = self.k(key)
-#     if self.v: value = self.v(value)
-#     q, k, v = qs * query, ks * key, vs * value
-#     if self.drop:
-#         q, k, v = self.drop(q), k, self.drop(v)
-
-#     original_q = q
-
-#     if not batch_first:
-#         q, k, v = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
-
-#     batch_size, query_len, nhid = q.size()
-#     assert nhid == self.nhid
-#     key_len = k.size(1)
-#     ###
-#     dim = self.nhid // self.heads
-#     q = q.view(batch_size, query_len, self.heads, dim).transpose(1, 2)
-#     k, v = [vec.view(batch_size, key_len, self.heads, dim).transpose(1, 2) for vec in [k, v]]
-
-#     mix, focus = attention(q, k, v, dropout=self.drop, attn_mask=attn_mask, **kwargs)
-#     mix = mix.transpose(1, 2).contiguous().view(batch_size, -1, self.nhid)
-#     if not batch_first:
-#         mix = mix.transpose(0, 1)
-
-#     if self.r:
-#         r = torch.cat([mix, original_q], dim=-1)
-#         if self.drop: r = self.drop(r)
-#         r = self.gelu(self.r(r))
-#         mix = torch.sigmoid(self.r_gate) * mix + r
-
-#     return mix, focus
-
-
-
-struct Block
+    q, k, v = qs .* query, ks .* key, vs .* value
+    q, k, v = permutedims(q, [2, 1, 3]), permutedims(k,[ 2, 1, 3]), permutedims(v, [2, 1, 3])
+    
+    # check for batchmajor
+    
     
 end
+
+
+# struct Block
+    
+# end
 
 nothing

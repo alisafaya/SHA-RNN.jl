@@ -1,7 +1,4 @@
 # use Knet dev version
-using Pkg
-Pkg.activate("/home/asafaya19/develop-knet/Project.toml")
-
 using Knet
 
 include("../src/data.jl")
@@ -36,8 +33,7 @@ else
 end;
 
 @info "Loading the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 10, 1024, 1024, 2;
-
+epochs, em_size, hidden_size, layers = 15, 512, 512, 2;
 println("embedding size: ", em_size);
 println("hidden size: ", hidden_size);
 println("layers: ", layers);
@@ -47,16 +43,21 @@ trn = collect(flatten(shuffle!(ctrn) for i in 1:epochs));
 trnmini = ctrn[1:20];
 dev = collect(ddev);
 
-@info "Starting training ..."
-model = Knet.load("../jld2/xmodel.jld2", "model")
-model.rnn.c, model.rnn.h = 0, 0
-initopt!(model, length(trn))
-model = train!(model, trn, dev; report_iter=length(ctrn))
 
-@info "Starting tuning..."
+@info "Starting training, total iteration no: $(length(trn))"
+# model = Knet.load("../jld2/xmodel.jld2", "model")
+model = XModel(em_size, hidden_size, vocab; layers=layers, dropout=0.2);
 model.rnn.c, model.rnn.h = 0, 0
-initopt!(model, length(trn), lr=0.001)
-model = train!(model, trn, dev; report_iter=length(ctrn))
+initopt!(model, length(trn); lr=0.003)
+model = train!(model, trn, dev; report_iter=1000)
+
+
+model.rnn.c, model.rnn.h = 0, 0
+initopt!(model, length(trn); lr=0.001)
+epochs = 5
+trn = collect(flatten(shuffle!(ctrn) for i in 1:epochs));
+@info "Starting tuning, total iteration no: $(length(trn))"
+model = train!(model, trn, dev; report_iter=500)
 
 @info "Finished training, Starting evaluation ..."
 trnloss = loss(model, dtrn);
@@ -70,4 +71,4 @@ println("Test set scores:           ", report(testloss))
 # print(generate(model, start="United Nations ", maxlength=1024))
 
 @info "Saving the model as model.jld2"
-Knet.save("model.jld2", "model", model);
+Knet.save("model_x.jld2", "model", model);
