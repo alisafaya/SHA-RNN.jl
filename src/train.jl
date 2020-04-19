@@ -1,7 +1,7 @@
 using Knet, Dates
 
 include("data.jl")
-include("layers.jl")
+include("model.jl")
 include("optimizer.jl")
 
 function loss(model, data; average=true)

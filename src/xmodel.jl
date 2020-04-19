@@ -1,7 +1,7 @@
 using Knet, StatsBase, LinearAlgebra, Random
 
 include("data.jl")
-include("layers.jl")
+include("model.jl")
 
 struct XModel
     embed::Embed
