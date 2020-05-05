@@ -24,6 +24,7 @@ docs/site/
 Manifest.toml
 data
 jld2
+*.jld2
 .ipynb_checkpoints
 
 

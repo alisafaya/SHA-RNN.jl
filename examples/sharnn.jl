@@ -1,6 +1,6 @@
 @info "Train baseline Single Headed Attention Recurrent language model using enwik8 dataset..."
 
-using Knet, Random
+using Knet
 
 include("../src/data.jl")
 include("../src/model.jl")
@@ -8,7 +8,9 @@ include("../src/train.jl")
 
 datadir = "../data/enwik8"
 jld2dir = "../jld2/enwik8.jld2"
-BATCHSIZE = 32
+BATCHSIZE = 4
+BPTT = 1024
+MEMSIZE = 5000
 
 if !isfile(jld2dir)
     println("Reading data from directory: $datadir")
@@ -17,9 +19,9 @@ if !isfile(jld2dir)
     trainfile = TextReader("$datadir/train.txt", vocab)
     validfile = TextReader("$datadir/valid.txt", vocab)
     testfile = TextReader("$datadir/test.txt", vocab)
-    dtrn = TextData(trainfile, batchsize=BATCHSIZE)
-    ddev = TextData(validfile, batchsize=BATCHSIZE)
-    dtst = TextData(testfile, batchsize=BATCHSIZE)
+    dtrn = TextData(trainfile, batchsize=BATCHSIZE, bptt=BPTT)
+    ddev = TextData(validfile, batchsize=BATCHSIZE, bptt=BPTT)
+    dtst = TextData(testfile, batchsize=BATCHSIZE, bptt=BPTT)
     println("Saving data from $jld2dir")
     Knet.save(jld2dir, "dtrn", dtrn, "dtst", dtst, "ddev", ddev)
 else 
@@ -31,38 +33,50 @@ else
         changebatchsize!(ddev, BATCHSIZE)
         changebatchsize!(dtst, BATCHSIZE)
     end;
+    dtrn.bptt = BPTT
+    dtst.bptt = BPTT
+    ddev.bptt = BPTT
+    
+    println("BPTT: ", dtrn.bptt)
 end;
 
 println()
 @info "Initializing the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 1, 128, 512, 2;
-
-println("embedding size: ", em_size);
-println("hidden size: ", hidden_size);
-println("layers: ", layers);
+epochs, em_size, hidden_size, layers = 1, 1024, 4096, 4
+println("embedding size: ", em_size)
+println("hidden size: ", hidden_size)
+println("layers: ", layers)
+println("Collecting training data...")
 println("epochs: ", epochs)
-ctrn = collect(dtrn);
-trn = collect(flatten(shuffle!(ctrn) for i in 1:epochs));
-trnmini = ctrn[1:20];
+
+ctrn = collect(dtrn)
+trn = collect(flatten(ctrn for i in 1:epochs))
 dev = collect(ddev);
-model = SHARNN(em_size, hidden_size, vocab, layers);
-# initopt!(model, length(trn))
+
+model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
+# model = Knet.load("sharnn_$(em_size)_$(layers).jld2", "model")
 
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-bestmodel = train!(model, trn, dev)
+initopt!(model, length(trn); lr=0.002, warmup=(1000)/length(trn))
+model = train!(model, trn, dev[1:2]; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
 
-println()
-@info "Finished training, Starting evaluation ..."
-trnloss = loss(bestmodel, dtrn);
-println("Training set scores:       ", report(trnloss))
-devloss = loss(bestmodel, ddev);
-println("Development set scores:    ", report(devloss))
-testloss = loss(bestmodel, dtst);
-println("Test set scores:           ", report(testloss))
+function evaluate()
+    println()
+    @info "Finished training, Starting evaluation ..."
+    devloss = loss(model, ddev);
+    println("Development set scores:    ", report_lm(devloss))
+    testloss = loss(model, dtst);
+    println("Test set scores:           ", report_lm(testloss))
+    trnloss = loss(model, dtrn);
+    println("Training set scores:       ", report_lm(trnloss))
+    
+    # @info "Generate text using the trained model"
+    # print(generate(model, start="United Nations ", maxlength=1024))
 
-@info "Generate text using the trained model"
-print(generate(bestmodel, start="United Nations ", maxlength=1024))
+    model_name = "sharnn_$(em_size)_$(layers).jld2"
+    @info "Saving the model as $(model_name)"
+    Knet.save(model_name, "model", model);
+end
 
-# @info "Saving the model as model.jld2"
-# Knet.save("model.jld2", "model", model); # uncomment for saving
+atexit(evaluate)

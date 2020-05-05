@@ -1,13 +1,17 @@
 using Knet, LinearAlgebra
 
+include("gelu.jl")
+
 aType = Knet.gpu() > -1 ? KnetArray{Float32} : Array{Float32} 
+init_f = gaussian
 
 mmul(w,x) = (w == 1 ? x : w == 0 ? 0 : reshape(w * reshape(x,size(x,1),:), (:, size(x)[2:end]...)))
+std2(a, μ, ϵ) = sqrt.(Knet.mean(abs2.(a .- μ), dims=1) .+ ϵ)
 
 struct Embed; w; end
 
 function Embed(vocabsize::Int, embedsize::Int)
-    Embed(param(embedsize, vocabsize; atype=aType))
+    Embed(param(embedsize, vocabsize; atype=aType, init=init_f))
 end
 
 function (l::Embed)(x)
@@ -17,25 +21,25 @@ end
 struct Linear; w; b; end
 
 function Linear(inputsize::Int, outputsize::Int)
-    Linear(param(outputsize, inputsize; atype=aType), param0(outputsize; atype=aType))
+    Linear(param(outputsize, inputsize; atype=aType, init=init_f), param0(outputsize; atype=aType))
 end
 
 function (l::Linear)(x)
     mmul(l.w, x) .+ l.b
 end
 
+struct LayerNorm
+    γ
+    β
+    ϵ
+end
 
-"""
-    gelu(x)
-    
-    Gaussian Error Linear Unit Activation Function
-    https://arxiv.org/abs/1606.08415
+LayerNorm(hidden_size::Int; eps=1e-12) = LayerNorm(Param(aType(ones(hidden_size))), param0(hidden_size, atype=aType), eps)
 
-    returns: 
-        x * sigm(1.702 * x)
-"""
-function gelu(x)
-    return x * sigm(1.702 * x)
+function (n::LayerNorm)(x)
+    μ = Knet.mean(x, dims=1)
+    x = (x .- μ) ./ std2(x, μ, n.ϵ) # corrected=false for n
+    return n.γ .* x .+ n.β
 end
 
 struct Boom
@@ -98,6 +102,7 @@ struct Attention
     ks
     vs
     vq
+    qln
     heads::Int
     hiddensize::Int
     depth::Int
@@ -114,16 +119,18 @@ function Attention(nhid; q=true, k=false, v=false, heads=1, dropout=0)
     ks = param0(nhid, 1; atype=aType)
     vs = param0(nhid, 1; atype=aType)
     vq = Overparam(nhid)
+    qln = LayerNorm(nhid, eps=1e-12)
     depth = nhid ÷ heads
 
-    Attention(q, k, v, qs, ks, vs, vq, heads, nhid, depth, dropout)
+    Attention(q, k, v, qs, ks, vs, vq, qln, heads, nhid, depth, dropout)
 end
 
 function (a::Attention)(query, key, value; attn_mask=false)
     qs, ks, vs = sigm.(a.qs), sigm.(a.ks), sigm.(a.vs)
     vs = a.vq(vs)
     
-    query = a.q !== false ? a.q(query) : query; # add LayerNorm. for query here
+    query = a.q !== false ? a.q(query) : query;
+    query = a.q !== false ? a.qln(query) : query;
     key = a.k !== false ? a.k(key) : key;
     value = a.v !== false ? a.v(value) : value;
 
@@ -144,7 +151,7 @@ function (a::Attention)(query, key, value; attn_mask=false)
     mix = reshape(mix, size(mix, 1), :, size(mix, 4))
     mix = permutedims(mix, (2, 3, 1))
 
-    mix, focus # mix -> H, B, Tq
+    mix, focus # mix -> H, B, T
 end
 
 function attention(q, k, v; attn_mask=nothing, adropout=0.0)
@@ -153,7 +160,8 @@ function attention(q, k, v; attn_mask=nothing, adropout=0.0)
 
     # to be checked
     if attn_mask !== false
-        attn_scores .+= attn_mask
+        # attn_scores .+= attn_mask # error on backward pass, -> no method matching copyto!(::KnetArray{Float32,4}, ::Base.Broadcast.Broadcasted{Base.Broadcast.Style{AutoGrad.Value},NTuple{4,Base.OneTo{Int64}},typeof(identity),Tuple{AutoGrad.Result{KnetArray{Float32,4}}}})
+        attn_scores = attn_mask .+ attn_scores
     end
 
     attn_scores = softmax(attn_scores, dims=2) # on K dim
@@ -171,6 +179,11 @@ struct SHARNNBlock
     dropout
     residual
     rnn
+    lnstart
+    lnmid
+    lnmem
+    lnff
+    lnxff
 end
 
 function SHARNNBlock(embed_dim, hidden_dim; heads=1, dropout=0.0, residual=true, use_attn=true)
@@ -183,12 +196,17 @@ function SHARNNBlock(embed_dim, hidden_dim; heads=1, dropout=0.0, residual=true,
 
     ff = Boom(embed_dim; dim_feedforward=hidden_dim, dropout=dropout, shortcut=true, act=gelu)
     rnn = RNN(embed_dim, embed_dim)
-    
-    SHARNNBlock(attn, ff, dropout, residual, rnn)
+    lnstart = LayerNorm(embed_dim, eps=1e-12)
+    lnmid = LayerNorm(embed_dim, eps=1e-12)
+    lnmem = LayerNorm(embed_dim, eps=1e-12)
+    lnff = LayerNorm(embed_dim, eps=1e-12)
+    lnxff = LayerNorm(embed_dim, eps=1e-12)
+
+    SHARNNBlock(attn, ff, dropout, residual, rnn, lnstart, lnmid, lnmem, lnff, lnxff)
 end
 
 function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
-    # h -> LN
+    h = b.lnstart(h)
     
     # RNN part
     if hidden !== nothing
@@ -196,28 +214,37 @@ function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
     else
         b.rnn.h, b.rnn.c = 0, 0
     end
+
     x = b.rnn(h)
     x = dropout(x, b.dropout)
-    new_hidden = (b.rnn.h, b.rnn.c)
+    new_hidden = (value(b.rnn.h), value(b.rnn.c))
+#     new_hidden = "h"
     h = b.residual ? (h + x) : x  
 
     # Attention part
     focus, new_mem = nothing, []
     if b.attn !== nothing
-        mh = h .+ Float32(0) # mh, h LN
-        bigh = mem !== nothing ? cat([mem, mh], dims=3) : mh
-        newmem_strt_idx = size(bigh, 3) - length(p_encoding) + 1 # +1 because julia indicies start with 1 -_-
+        mh = b.lnmem(h)
+        h = b.lnmid(h)
 
-        new_mem = bigh[:, :, newmem_strt_idx:end] #### BUG
+        if mem !== nothing
+            bigh = cat(mem, mh, dims=3)
+        else
+            bigh = mh
+        end
 
+        newmemsize = length(p_encoding)
+        newmem_start_idx = newmemsize < (size(bigh, 3) + 1) ? (size(bigh, 3) + 1 - newmemsize) : 1
+        new_mem = value(bigh[:, :, newmem_start_idx:end])
+        
         x, focus = b.attn(h, bigh, bigh; attn_mask=attn_mask)
         x = dropout(x, b.dropout)
         h = x + h
     end
-    
+
     # Boom layer
-    # h, x LN
-    x = b.ff(h)
+    h, x = b.lnff(h), b.lnxff(h)
+    x = b.ff(x)
     x = dropout(x, b.dropout)
     h = h + x
 
@@ -234,13 +261,11 @@ mutable struct SHARNN
     hdrop
     num_max_positions
     pos_emb
-    # 
     new_hidden
     new_mems
-    #
 end
 
-function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_positions=1024, nheads=1, dropout=0.5, dropouth=0.5, dropouti=0.5, dropoute=0.1, wdrop=0, tie_weights=false)
+function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_positions=1024, nheads=1, dropout=0.0, dropouth=0.1, dropouti=0.1, wdrop=0, tie_weights=false)
     
     encoder = Embed(length(vocab.i2v), embsz)
     decoder = Linear(embsz, length(vocab.i2v))
@@ -255,9 +280,7 @@ function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_pos
         push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=true)) # (i == (nlayers - 1))
     end
 
-    model = SHARNN(encoder, decoder, vocab, blocks, dropouti, dropout, dropouth, num_max_positions, pos_emb, nothing, nothing)
-    # initweights(model)
-    model
+    SHARNN(encoder, decoder, vocab, blocks, dropouti, dropout, dropouth, num_max_positions, pos_emb, nothing, nothing)
 end
 
 function (s::SHARNN)(x; hidden=nothing, mems=nothing, return_h=true)
@@ -265,32 +288,30 @@ function (s::SHARNN)(x; hidden=nothing, mems=nothing, return_h=true)
     
     if mems !== nothing
         maxmem = s.num_max_positions - size(embed, 3)
-        mems = [ m[:, :, end-maxmem+1:end] for m in mems]
+        maxmem_start_idx = maxmem < (size(mems[1], 3) + 1) ? (size(mems[1], 3) + 1 - maxmem) : 1
+        mems = [ m[:, :, maxmem_start_idx:end] for m in mems]
     end
 
     new_hidden, new_mems, focus = [], [], []
     attn_mask = fill(typemin(Float32), size(embed, 3), size(embed, 3)) # -> TxT
-    attn_mask = aType(triu(attn_mask, 1))
+    attn_mask = triu(attn_mask, 1)
     if mems !== nothing
         max_mem_size = max([size(m, 3) for m in mems]...)
-        max_mem_size
-        attn_mask = vcat(attn_mask, aType(zeros(Float32, max_mem_size, size(embed, 3)))) # or hcat(zeros(Float32, max_mem_size, size(embed, 3)), attn_mask)
+        attn_mask = cat(zeros(Float32, size(embed, 3), max_mem_size), attn_mask, dims=2)
     end
+    attn_mask = aType(attn_mask)
 
+    h = embed
     for (i, block) in enumerate(s.blocks)
         mem = mems !== nothing ? mems[i] : nothing
         hid = hidden !== nothing ? hidden[i] : nothing
-        h, m, nh, f = block(embed, s.pos_emb, attn_mask; mem=mem, hidden=hid)
+        h, m, nh, f = block(h, s.pos_emb, attn_mask; mem=mem, hidden=hid)
         push!(new_hidden, nh)
         push!(new_mems, m)
     end
     h = dropout(h, s.drop)
 
-    if return_h
-        return h, new_hidden, new_mems, nothing, nothing
-    else
-        return h, new_hidden, new_mems
-    end
+    h, new_hidden, new_mems
 end
 
 function mask(a, pad)
@@ -308,10 +329,11 @@ function mask(a, pad)
 end
 
 function (s::SHARNN)(src, tgt; average=true)
-    h, new_hidden, new_mems = s(src) 
-    # h, new_hidden, new_mems = s(src; hidden=s.new_hidden, mems=s.new_mems) 
-    # s.new_hidden = new_hidden
-    # s.new_mems = new_mems
+#     h, new_hidden, new_mems = s(src) 
+#     h, new_hidden, new_mems = s(src; mems=s.new_mems) 
+    h, new_hidden, new_mems = s(src; hidden=s.new_hidden, mems=s.new_mems) 
+    s.new_hidden = new_hidden
+    s.new_mems = new_mems
     scores = s.decoder(h)
     nll(scores, mask(tgt, s.vocab.eos); dims=1, average=average)
 end

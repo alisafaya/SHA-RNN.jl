@@ -107,14 +107,20 @@ function Base.iterate(d::TextData, state=nothing)
         (d.batchmajor) && (x = x')
         batch = (x[:, 1:end-1], x[:, 2:end])
 
-        if state[1] + d.bptt >= size(d.dataarray, 2)
+        if state[2] >= size(d.dataarray, 2)
             return batch, 0
-        elseif state[2] + d.bptt >= size(d.dataarray, 2)
-            state = (state[1] + d.bptt, size(d.dataarray, 2))
         else
-            state = state .+ d.bptt
+            seq_len = (rand([1,1,1,1,1,1,1,1,1,0]) == 1) ? d.bptt : (d.bptt ÷ 2) # get half of bptt 10% of the time.
+            next_bptt = Int(gaussian(1; mean=seq_len, std=5)[1] ÷ 1)
+            starting_idx = state[2]
+            ending_idx = state[2] + next_bptt
+            state = (starting_idx, ending_idx)
         end
-
+                        
+        if state[2] >= size(d.dataarray, 2)
+            state = (state[1], size(d.dataarray, 2))
+        end
+        
         return batch, state
     end
 end
