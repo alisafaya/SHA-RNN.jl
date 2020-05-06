@@ -6,12 +6,13 @@ include("../src/data.jl")
 include("../src/model.jl")
 include("../src/train.jl")
 
+BATCHSIZE = 4 ; @show BATCHSIZE
+BPTT = 1024 ; @show BPTT
+MEMSIZE = 2048 ; @show MEMSIZE
+EMSIZE = 1024 ; @show EMSIZE
+
 datadir = "../data/enwik8"
 jld2dir = "../jld2/enwik8.jld2"
-BATCHSIZE = 4
-BPTT = 1024
-MEMSIZE = 5000
-
 if !isfile(jld2dir)
     println("Reading data from directory: $datadir")
     println("Setting batch size to $BATCHSIZE")
@@ -37,12 +38,11 @@ else
     dtst.bptt = BPTT
     ddev.bptt = BPTT
     
-    println("BPTT: ", dtrn.bptt)
 end;
 
 println()
 @info "Initializing the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 1, 1024, 4096, 4
+epochs, em_size, hidden_size, layers = 2, EMSIZE, (EMSIZE*4), 4
 println("embedding size: ", em_size)
 println("hidden size: ", hidden_size)
 println("layers: ", layers)
@@ -53,13 +53,13 @@ ctrn = collect(dtrn)
 trn = collect(flatten(ctrn for i in 1:epochs))
 dev = collect(ddev);
 
-model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
+# model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
 # model = Knet.load("sharnn_$(em_size)_$(layers).jld2", "model")
-
+model = Knet.load("model_1588696599.jld2", "model")
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-initopt!(model, length(trn); lr=0.002, warmup=(1000)/length(trn))
-model = train!(model, trn, dev[1:2]; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
+# initopt!(model, length(trn); lr=0.0005, warmup=(1000)/length(trn))
+model = train!(model, trn, dev; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
 
 function evaluate()
     println()

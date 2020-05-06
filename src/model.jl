@@ -218,7 +218,6 @@ function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
     x = b.rnn(h)
     x = dropout(x, b.dropout)
     new_hidden = (value(b.rnn.h), value(b.rnn.c))
-#     new_hidden = "h"
     h = b.residual ? (h + x) : x  
 
     # Attention part
