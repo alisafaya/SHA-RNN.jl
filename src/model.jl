@@ -190,15 +190,17 @@ function SHARNNBlock(embed_dim, hidden_dim; heads=1, dropout=0.0, residual=true,
     
     if use_attn
         attn = Attention(embed_dim; heads=heads, dropout=dropout)
+        lnmid = LayerNorm(embed_dim, eps=1e-12)
+        lnmem = LayerNorm(embed_dim, eps=1e-12)
     else
         attn = nothing
+        lnmid = nothing
+        lnmem = nothing
     end
 
     ff = Boom(embed_dim; dim_feedforward=hidden_dim, dropout=dropout, shortcut=true, act=gelu)
     rnn = RNN(embed_dim, embed_dim)
     lnstart = LayerNorm(embed_dim, eps=1e-12)
-    lnmid = LayerNorm(embed_dim, eps=1e-12)
-    lnmem = LayerNorm(embed_dim, eps=1e-12)
     lnff = LayerNorm(embed_dim, eps=1e-12)
     lnxff = LayerNorm(embed_dim, eps=1e-12)
 
@@ -276,7 +278,7 @@ function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_pos
 
     blocks = []
     for i=1:nlayers
-        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=true)) # (i == (nlayers - 1))
+        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=false)) # (i == (nlayers - 1))
     end
 
     SHARNN(encoder, decoder, vocab, blocks, dropouti, dropout, dropouth, num_max_positions, pos_emb, nothing, nothing)

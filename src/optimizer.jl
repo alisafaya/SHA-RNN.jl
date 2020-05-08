@@ -22,7 +22,7 @@ mutable struct BertAdam
     t_total
 end
 
-BertAdam(; lr=0.001, gclip=1.0, beta1=0.9, beta2=0.999, eps=1e-6, w_decay_rate=0.0, schedule="warmup_linear", warmup=-1, t_total=-1)=BertAdam(lr, beta1, beta2, eps, 0, gclip, nothing, nothing, w_decay_rate, schedule, warmup, t_total)
+BertAdam(; lr=0.001, gclip=1.0, beta1=0.9, beta2=0.999, eps=1e-6, w_decay_rate=0.0, schedule="warmup_constant", warmup=-1, t_total=-1)=BertAdam(lr, beta1, beta2, eps, 0, gclip, nothing, nothing, w_decay_rate, schedule, warmup, t_total)
 
 for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
     @eval begin
