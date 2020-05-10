@@ -225,27 +225,24 @@ function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
     # Attention part
     focus, new_mem = nothing, []
     if b.attn !== nothing
-        mh = b.lnmem(h)
-        h = b.lnmid(h)
-
         if mem !== nothing
-            bigh = cat(mem, mh, dims=3)
+            bigh = cat(mem, b.lnmem(h), dims=3)
         else
-            bigh = mh
+            bigh = b.lnmem(h)
         end
 
         newmemsize = length(p_encoding)
         newmem_start_idx = newmemsize < (size(bigh, 3) + 1) ? (size(bigh, 3) + 1 - newmemsize) : 1
         new_mem = value(bigh[:, :, newmem_start_idx:end])
         
+        h = b.lnmid(h)
         x, focus = b.attn(h, bigh, bigh; attn_mask=attn_mask)
         x = dropout(x, b.dropout)
         h = x + h
     end
 
     # Boom layer
-    h, x = b.lnff(h), b.lnxff(h)
-    x = b.ff(x)
+    h, x = b.lnff(h), b.ff(b.lnxff(h))
     x = dropout(x, b.dropout)
     h = h + x
 
@@ -278,7 +275,7 @@ function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_pos
 
     blocks = []
     for i=1:nlayers
-        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=false)) # (i == (nlayers - 1))
+        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=true)) # (i == (nlayers - 1))
     end
 
     SHARNN(encoder, decoder, vocab, blocks, dropouti, dropout, dropouth, num_max_positions, pos_emb, nothing, nothing)

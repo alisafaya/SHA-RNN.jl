@@ -53,10 +53,11 @@ mutable struct TextData
     dataarray::Array{Int16, 2} # batchified data array for language modeling tasks
     maxsize::Int                # max length of text to read
     bptt::Int                   # how many steps to back propagate through time
+    randomize::Bool             # randomize BPTT
 end
 
 function TextData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
-                batchmajor = false, maxsize = typemax(Int), bptt = 1024)
+                batchmajor = false, maxsize = typemax(Int), bptt = 1024, randomize = true)
     datavector = Vector{Int16}()
     nr = lb = length(datavector)
 
@@ -79,7 +80,7 @@ function TextData(src::TextReader; batchsize = 128, maxlength = typemax(Int),
     datavector = resize!(datavector, nr)
     N = length(datavector) ÷ batchsize
     batchified_dataarray = reshape(datavector[1:N * batchsize], N, batchsize)'
-    TextData(src, batchsize, batchmajor, batchified_dataarray, maxsize, bptt)
+    TextData(src, batchsize, batchmajor, batchified_dataarray, maxsize, bptt, randomize)
 end
 
 function changebatchsize!(d::TextData, newbatchsize::Int)
@@ -109,14 +110,16 @@ function Base.iterate(d::TextData, state=nothing)
 
         if state[2] >= size(d.dataarray, 2)
             return batch, 0
-        else
+        elseif d.randomize
             seq_len = (rand([1,1,1,1,1,1,1,1,1,0]) == 1) ? d.bptt : (d.bptt ÷ 2) # get half of bptt 10% of the time.
             next_bptt = Int(gaussian(1; mean=seq_len, std=5)[1] ÷ 1)
             starting_idx = state[2]
             ending_idx = state[2] + next_bptt
             state = (starting_idx, ending_idx)
+        else
+            state = state .+ d.bptt
         end
-                        
+        
         if state[2] >= size(d.dataarray, 2)
             state = (state[1], size(d.dataarray, 2))
         end

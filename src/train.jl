@@ -10,6 +10,25 @@ end
 
 report_lm(loss) = floor.((loss, exp.(loss), loss ./ log(2)); digits=4)
 
+# Uses default Adam optimizer
+function trainadam!(model, trn, dev, tst...; report_iter=300)
+    bestmodel, bestloss = deepcopy(model), loss(model, dev)
+    progress!(adam(model, trn; lr=0.002), steps=report_iter) do y
+        devloss = loss(model, dev)
+        tstloss = map(d->loss(model,d), tst)
+        for p in params(model)
+            p.opt.lr /= (10/11)
+        end
+        if devloss < bestloss
+            bestloss, bestmodel = devloss, deepcopy(model)
+        end
+        println(stderr)
+        (trn=report_lm.(tstloss), dev=report_lm(devloss))
+    end
+    return bestmodel
+end;
+
+
 function initopt!(model, t_total; lr=0.001, warmup=0.1)
     for par in params(model)
         if length(size(value(par))) === 1
@@ -21,7 +40,7 @@ function initopt!(model, t_total; lr=0.001, warmup=0.1)
 end
 
 # Uses default Bert Adam optimizer
-function train!(model, dtrn, ddev; report_iter=300)
+function train!(model, dtrn, ddev, p...; report_iter=300)
     losses = []
     model_name = "model_$(Int(time()÷1)).jld2"
     bestmodel = deepcopy(model)
