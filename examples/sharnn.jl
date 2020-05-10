@@ -19,15 +19,15 @@ function evaluate()
     # @info "Generate text using the trained model"
     # print(generate(model, start="United Nations ", maxlength=1024))
 #     model_name = "no_attention_14_e.jld2"
-    model_name = "single_attention_15_e.jld2"
+#     model_name = "single_attention_15_e.jld2"
 #     model_name = "main_16_e.jld2"
 
     @info "Saving the model as $(model_name)"
-    Knet.save(model_name, "model", model);
+#     Knet.save(model_name, "model", model);
 end
 
 BATCHSIZE = 6 ; @show BATCHSIZE
-BPTT = 1024 ; @show BPTT
+BPTT = 512 ; @show BPTT
 MEMSIZE = 1024 ; @show MEMSIZE
 EMSIZE = 256 ; @show EMSIZE
 
@@ -61,28 +61,28 @@ end;
 
 println()
 @info "Initializing the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 5, EMSIZE, (EMSIZE*4), 2
+epochs, em_size, hidden_size, layers = 20, EMSIZE, (EMSIZE*4), 2
 println("embedding size: ", em_size)
 println("hidden size: ", hidden_size)
 println("layers: ", layers)
 println("Collecting training data...")
 println("epochs: ", epochs)
 
-ctrn = collect(dtrn)
-trn = collect(flatten(collect(dtrn) for i in 1:epochs))
+ctrn = collect(dtst)
+trn = collect(flatten(collect(dtst) for i in 1:epochs))
 dev = collect(ddev)
 mintrn = ctrn[1:20]
 
-# model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
+model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
 
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-model = Knet.load("single_attention_10_e.jld2", "model")
+# model = Knet.load("single_attention_10_e.jld2", "model")
 # model = Knet.load("no_attention_7_e.jld2", "model")
 # model = Knet.load("main_12_e.jld2", "model")
 
 # evaluate()
-# initopt!(model, length(trn); lr=0.002, warmup=(1000)/length(trn))
+initlamb!(model, length(trn); lr=0.002, warmup=(1000)/length(trn))
 model = train!(model, trn, dev, mintrn; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
 
 # model = trainadam!(model, trn, dev, mintrn; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/

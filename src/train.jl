@@ -2,7 +2,8 @@ using Knet, Dates
 
 include("data.jl")
 include("model.jl")
-include("optimizer.jl")
+include("lamb.jl")
+include("bertadam.jl")
 
 function loss(model, data; average=true)
     Knet.mean([model(x,y) for (x,y) in data])
@@ -29,22 +30,13 @@ function trainadam!(model, trn, dev, tst...; report_iter=300)
 end;
 
 
-function initopt!(model, t_total; lr=0.001, warmup=0.1)
-    for par in params(model)
-        if length(size(value(par))) === 1
-            par.opt = BertAdam(lr=lr, warmup=warmup, t_total=t_total, w_decay_rate=0.01)
-        else
-            par.opt = BertAdam(lr=lr, warmup=warmup, t_total=t_total)
-        end
-    end
-end
-
-# Uses default Bert Adam optimizer
+# Doesn't initialize optimizer
 function train!(model, dtrn, ddev, p...; report_iter=300)
     losses = []
     model_name = "model_$(Int(time()÷1)).jld2"
     bestmodel = deepcopy(model)
-    bestloss = loss(model, ddev)
+#     bestloss = loss(model, ddev)
+    bestloss = 1e5
     println("Total iterations = ", length(trn))
     print(Dates.format(now(), "HH:MM:SS"), "  ->  ")
     println("Dev set scores : ", report_lm(bestloss))

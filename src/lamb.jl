@@ -7,6 +7,7 @@
 
 import Knet: update!
 using AutoGrad: full
+using LinearAlgebra
 
 warmup_cosine(x, warmup=0.002) = x < warmup ? x/warmup : 0.5 * (1.0 + cos(π * x))
 warmup_constant(x, warmup=0.002) = x < warmup ? x/warmup : 1.0
@@ -28,17 +29,26 @@ mutable struct MinTrustLAMB
     scndm
 end
 
-MinTrustLAMB(; min_trust=0.25, lr=1e-3, gclip=1.0, beta1=0.9, beta2=0.999, eps=1e-6, w_decay_rate=0.0, schedule="warmup_constant", warmup=-1, t_total=-1) = \
-    MinTrustLAMB(lr, beta1, beta2, eps, w_decay_rate, min_trust, gclip, 0, schedule, warmup, t_total, nothing, nothing)
+MinTrustLAMB(; min_trust=0.25, lr=1e-3, gclip=0.25, beta1=0.9, beta2=0.999, eps=1e-6, w_decay=0.0, schedule="warmup_constant", warmup=-1, t_total=-1) = MinTrustLAMB(lr, beta1, beta2, eps, w_decay, min_trust, gclip, 0, schedule, warmup, t_total, nothing, nothing)
+
+function initlamb!(model, t_total; min_trust=0.25, lr=0.001, warmup=0.1)
+    for par in params(model)
+        if length(size(value(par))) === 1
+            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, t_total=t_total, w_decay=1.2e-6)
+        else
+            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, t_total=t_total)
+        end
+    end
+end
 
 for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
     @eval begin
         function update!(w::$T, g, p::MinTrustLAMB)
-            # Knet.gclip!(g, p.gclip)
+            Knet.gclip!(g, p.gclip)
             g = full(g)
             if p.fstm===nothing; p.fstm=zero(w); p.scndm=zero(w); end
-            
             p.t += 1
+
             # Decay the first and second moment running average coefficient
             # scndm : v_t, fstm : m_t
             
@@ -53,38 +63,29 @@ for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
             else
                 lr_scheduled = p.lr
             end
-    
-            # weight_norm = p.data.pow(2).sum().sqrt().clamp(0, 10)
+            
+            if p.w_decay > 0.0
+                adam_step = (p.fstm ./ (sqrt.(p.scndm) .+ p.eps)) .+ (p.w_decay * w)
+            else
+                adam_step = (p.fstm ./ (sqrt.(p.scndm) .+ p.eps))
+            end
 
-            # if p.w_decay_rate > 0.0
-            #     axpy!(-lr_scheduled, (p.fstm ./ (sqrt.(p.scndm) .+ p.eps)) .+ (p.w_decay_rate * w), w)
-            # else
-            #     axpy!(-lr_scheduled, (p.fstm ./ (sqrt.(p.scndm) .+ p.eps)), w)
-            # end
-
-
-            # weight_norm = p.data.pow(2).sum().sqrt().clamp(0, 10)
-
-            # adam_step = exp_avg / exp_avg_sq.sqrt().add(group['eps'])
-            # if group['weight_decay'] != 0:
-            #     adam_step.add_(group['weight_decay'], p.data)
-
-            # adam_norm = adam_step.pow(2).sum().sqrt()
-            # if weight_norm == 0 or adam_norm == 0:
-            #     trust_ratio = 1
-            # else:
-            #     trust_ratio = weight_norm / adam_norm
-            # if self.min_trust:
-            #     trust_ratio = max(trust_ratio, self.min_trust)
+            weight_norm = clamp(norm(w), 0, 10)
+            adam_norm = norm(adam_step)
+            
+            if weight_norm == 0 || adam_norm == 0
+                trust_ratio = 1
+            else
+                trust_ratio = weight_norm / adam_norm
+            end
+            trust_ratio = max(trust_ratio, p.min_trust)
+            
             # state['weight_norm'] = weight_norm
             # state['adam_norm'] = adam_norm
             # state['trust_ratio'] = trust_ratio
-            # if self.adam:
-            #     trust_ratio = 1
 
             # p.data.add_(-step_size * trust_ratio, adam_step)
-
-
+            axpy!(-lr_scheduled * trust_ratio, adam_step, w)
         end
     end
 end;
