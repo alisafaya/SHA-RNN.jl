@@ -312,19 +312,6 @@ function (s::SHARNN)(x; hidden=nothing, mems=nothing, return_h=true)
     h, new_hidden, new_mems
 end
 
-function mask(a, pad)
-    a = copy(a)
-    for i in 1:size(a, 1)
-        j = size(a,2)
-        while a[i, j] == pad && j > 1
-            if a[i, j - 1] == pad
-                a[i, j] = 0
-            end
-            j -= 1
-        end
-    end
-    return a
-end
 
 function (s::SHARNN)(src, tgt; average=true)
 #     h, new_hidden, new_mems = s(src) 
@@ -333,7 +320,7 @@ function (s::SHARNN)(src, tgt; average=true)
     s.new_hidden = new_hidden
     s.new_mems = new_mems
     scores = s.decoder(h)
-    nll(scores, mask(tgt, s.vocab.eos); dims=1, average=average)
+    nll(scores, tgt; dims=1, average=average)
 end
 
 nothing

@@ -31,12 +31,12 @@ end
 
 MinTrustLAMB(; min_trust=0.25, lr=1e-3, gclip=0.25, beta1=0.9, beta2=0.999, eps=1e-6, w_decay=0.0, schedule="warmup_constant", warmup=-1, t_total=-1) = MinTrustLAMB(lr, beta1, beta2, eps, w_decay, min_trust, gclip, 0, schedule, warmup, t_total, nothing, nothing)
 
-function initlamb!(model, t_total; min_trust=0.25, lr=0.001, warmup=0.1)
+function initlamb!(model, t_total; min_trust=0.25, lr=0.001, warmup=0.1, schedule="warmup_constant")
     for par in params(model)
         if length(size(value(par))) === 1
-            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, t_total=t_total, w_decay=1.2e-6)
+            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, schedule=schedule, t_total=t_total, w_decay=1.2e-6)
         else
-            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, t_total=t_total)
+            par.opt = MinTrustLAMB(;min_trust=min_trust, lr=lr, warmup=warmup, schedule=schedule, t_total=t_total)
         end
     end
 end
@@ -51,12 +51,12 @@ for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
 
             # Decay the first and second moment running average coefficient
             # scndm : v_t, fstm : m_t
-            
             lmul!(p.beta1, p.fstm)
             axpy!(1-p.beta1, g, p.fstm)
             lmul!(p.beta2, p.scndm)
             axpy!(1-p.beta2, g .* g, p.scndm)
 
+            # Get Learning rate from scheduler
             if p.t_total !== -1
                 schedule_func = eval(Meta.parse(p.schedule))
                 lr_scheduled = p.lr * schedule_func(p.t/p.t_total, p.warmup)
@@ -64,15 +64,16 @@ for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
                 lr_scheduled = p.lr
             end
             
+            # Calculate Opt. Step
             if p.w_decay > 0.0
                 adam_step = (p.fstm ./ (sqrt.(p.scndm) .+ p.eps)) .+ (p.w_decay * w)
             else
                 adam_step = (p.fstm ./ (sqrt.(p.scndm) .+ p.eps))
             end
 
+            # Calculate Trust Ratio
             weight_norm = clamp(norm(w), 0, 10)
             adam_norm = norm(adam_step)
-            
             if weight_norm == 0 || adam_norm == 0
                 trust_ratio = 1
             else
@@ -80,11 +81,7 @@ for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
             end
             trust_ratio = max(trust_ratio, p.min_trust)
             
-            # state['weight_norm'] = weight_norm
-            # state['adam_norm'] = adam_norm
-            # state['trust_ratio'] = trust_ratio
-
-            # p.data.add_(-step_size * trust_ratio, adam_step)
+            # Update weight matrix
             axpy!(-lr_scheduled * trust_ratio, adam_step, w)
         end
     end

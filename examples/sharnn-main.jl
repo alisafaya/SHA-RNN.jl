@@ -13,22 +13,19 @@ function evaluate()
     println("Development set scores:    ", report_lm(devloss))
     testloss = loss(model, dtst);
     println("Test set scores:           ", report_lm(testloss))
-#     trnloss = loss(model, dtrn);
-#     println("Training set scores:       ", report_lm(trnloss))
     
     # @info "Generate text using the trained model"
     # print(generate(model, start="United Nations ", maxlength=1024))
-#     model_name = "no_attention_14_e.jld2"
-#     model_name = "single_attention_15_e.jld2"
-#     model_name = "main_16_e.jld2"
+#     model_name = "main_16_x.jld2"
+    model_name = "single_attention_20_x.jld2"
 
     @info "Saving the model as $(model_name)"
-#     Knet.save(model_name, "model", model);
+    Knet.save(model_name, "model", model);
 end
 
-BATCHSIZE = 8 ; @show BATCHSIZE
-BPTT = 512 ; @show BPTT
-MEMSIZE = 1024 ; @show MEMSIZE
+BATCHSIZE = 4 ; @show BATCHSIZE
+BPTT = 1024 ; @show BPTT
+MEMSIZE = 5000 ; @show MEMSIZE
 EMSIZE = 1024 ; @show EMSIZE
 
 datadir = "../data/enwik8"
@@ -61,7 +58,7 @@ end;
 
 println()
 @info "Initializing the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 1, EMSIZE, (EMSIZE*4), 1
+epochs, em_size, hidden_size, layers = 2, EMSIZE, (EMSIZE*4), 4
 println("embedding size: ", em_size)
 println("hidden size: ", hidden_size)
 println("layers: ", layers)
@@ -71,20 +68,21 @@ println("epochs: ", epochs)
 ctrn = collect(dtrn)
 trn = collect(flatten(collect(dtrn) for i in 1:epochs))
 dev = collect(ddev)
-mintrn = ctrn[1:20]
+mintrn = ctrn[1:20];
 
-model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
+# model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
 
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-# model = Knet.load("single_attention_10_e.jld2", "model")
+model = Knet.load("single_attention_19_x.jld2", "model")
 # model = Knet.load("no_attention_7_e.jld2", "model")
-# model = Knet.load("model_1589166828.jld2", "model")
+# model = Knet.load("main_15_x.jld2", "model")
 
-# evaluate()
-initlamb!(model, length(trn); lr=0.002, schedule="warmup_constant", warmup=(1000)/length(trn))
-model = train!(model, trn, dev, mintrn; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
+# println("Test set scores:           ", report_lm(loss(model, dtst)))
+# initlamb!(model, length(trn); lr=0.001, warmup=(1200)/length(trn))
 
-# model = trainadam!(model, trn, dev, mintrn; report_iter=length(ctrn)) #  TODO: stop training at anytime using CTRL-C -> not yet :/
+model = train!(model, trn, dev, mintrn; report_iter=(length(ctrn) ÷ 4), update_per_n_batch=4) #  TODO: stop training at anytime using CTRL-C
+
+# model = trainadam!(model, trn, dev, mintrn; report_iter=length(ctrn))
 
 atexit(evaluate)

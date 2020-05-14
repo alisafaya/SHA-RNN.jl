@@ -24,6 +24,16 @@ end
 
 BertAdam(; lr=0.001, gclip=1.0, beta1=0.9, beta2=0.999, eps=1e-6, w_decay_rate=0.0, schedule="warmup_constant", warmup=-1, t_total=-1)=BertAdam(lr, beta1, beta2, eps, 0, gclip, nothing, nothing, w_decay_rate, schedule, warmup, t_total)
 
+function initbertadam!(model, t_total; schedule="warmup_constant", lr=0.001, warmup=0.1)
+    for par in params(model)
+        if length(size(value(par))) === 1
+            par.opt = BertAdam(;lr=lr, warmup=warmup, t_total=t_total, w_decay_rate=0.01, schedule=schedule)
+        else
+            par.opt = BertAdam(;lr=lr, warmup=warmup, t_total=t_total, schedule=schedule)
+        end
+    end
+end
+
 for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
     @eval begin
         function update!(w::$T, g, p::BertAdam)
