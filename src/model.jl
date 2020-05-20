@@ -1,6 +1,6 @@
 using Knet, LinearAlgebra
 
-include("gelu.jl")
+# include("gelu.jl")
 
 aType = Knet.gpu() > -1 ? KnetArray{Float32} : Array{Float32} 
 init_f = gaussian
@@ -40,6 +40,18 @@ function (n::LayerNorm)(x)
     μ = Knet.mean(x, dims=1)
     x = (x .- μ) ./ std2(x, μ, n.ϵ) # corrected=false for n
     return n.γ .* x .+ n.β
+end
+
+"""
+    gelu(x)
+    
+    Gaussian Error Linear Unit Activation Function
+    https://arxiv.org/abs/1606.08415
+    returns: 
+        x * sigm(1.702 * x)
+"""
+function gelu(x)
+    return x * sigm(1.702 * x)
 end
 
 struct Boom
