@@ -13,14 +13,8 @@ function evaluate()
     println("Development set scores:    ", report_lm(devloss))
     testloss = loss(model, dtst);
     println("Test set scores:           ", report_lm(testloss))
-    
-    # @info "Generate text using the trained model"
-    # print(generate(model, start="United Nations ", maxlength=1024))
-#     model_name = "main_19_x.jld2"
-#     model_name = "single_attention_20_x.jld2"
 
-    model_name = "full_main_8.jld2"
-
+    model_name = "full_main.jld2"
     @info "Saving the model as $(model_name)"
     Knet.save(model_name, "model", model);
 end
@@ -76,15 +70,12 @@ model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE);
 
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-# model = Knet.load("single_attention_19_x.jld2", "model")
-# model = Knet.load("no_attention_7_e.jld2", "model")
-# model = Knet.load("main_17_x.jld2", "model");
-
-# println("Test set scores:           ", report_lm(loss(model, dtst)))
-
 initlamb!(model, length(trn); lr=0.002, warmup=(1200)/length(trn))
-model = train!(model, trn, dev, mintrn; report_iter=length(ctrn), update_per_n_batch=8) #  TODO: stop training at anytime using CTRL-C
 
-# model = trainadam!(model, trn, dev, mintrn; report_iter=length(ctrn))
+#  TODO: stop training at anytime using CTRL-C
+model = train!(model, trn, dev, mintrn; report_iter=length(ctrn), update_per_n_batch=8)
+
+halfdownlr(model)
+model = train!(model, trn, dev, mintrn; report_iter=length(ctrn), update_per_n_batch=8)
 
 atexit(evaluate)

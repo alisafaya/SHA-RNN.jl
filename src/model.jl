@@ -326,8 +326,6 @@ end
 
 
 function (s::SHARNN)(src, tgt; average=true)
-#     h, new_hidden, new_mems = s(src) 
-#     h, new_hidden, new_mems = s(src; mems=s.new_mems) 
     h, new_hidden, new_mems = s(src; hidden=s.new_hidden, mems=s.new_mems) 
     s.new_hidden = new_hidden
     s.new_mems = new_mems

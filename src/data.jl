@@ -128,13 +128,4 @@ function Base.iterate(d::TextData, state=nothing)
     end
 end
 
-# Utility to convert int arrays to sentence strings
-function int2string(y, vocab::Vocab)
-    y = vec(y)
-    ysos = findnext(w->!isequal(w, vocab.eos), y, 1)
-    ysos === nothing && return ""
-    yeos = something(findnext(isequal(vocab.eos), y, ysos), 1+length(y))
-    join(vocab.i2v[y[ysos:yeos-1]], " ")
-end;
-
 nothing
