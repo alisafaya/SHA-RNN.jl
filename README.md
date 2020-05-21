@@ -6,6 +6,10 @@ Stephan Merity. **Single Headed Attention RNN: Stop Thinking With Your Head**. _
 
 https://arxiv.org/abs/1911.11423v2
 
+
+![SHA-RNN Model](https://raw.githubusercontent.com/alisafaya/SHA-RNN.jl/master/SHA-RNN(2).png)
+
+
 After downloading the data and preprocessing it using
 
 ```bash
