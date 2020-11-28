@@ -31,7 +31,7 @@ Returns:
 function SimpleLSTMModel(embsz::Int, hidden::Int, vocab::Vocab; layers=1, dropout=0)
     
     embed = Embed(length(vocab.i2v), embsz)
-    rnn = RNN(embsz, hidden; bidirectional=false, numLayers=layers, dropout=dropout)
+    rnn = RNN(embsz, hidden; bidirectional=false, numLayers=layers, dropout=dropout, atype=aType)
     projection = Linear(hidden, length(vocab.i2v))
     rnn.h, rnn.c = 0, 0
     

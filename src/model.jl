@@ -1,12 +1,30 @@
-using Knet, LinearAlgebra
+using Knet, LinearAlgebra, CUDA, Statistics
 
-# include("gelu.jl")
+function Knet.KnetArray(x::CuArray{T,N}) where {T,N}
+    p = Base.bitcast(Knet.Cptr, pointer(x))
+    k = Knet.KnetPtr(p, sizeof(x), Int(CUDA.device().handle), x)
+    KnetArray{T,N}(k, size(x))
+end
 
-aType = Knet.gpu() > -1 ? KnetArray{Float32} : Array{Float32} 
-init_f = gaussian
+aType = CUDA.functional() ? KnetArray{Float32} : Array{Float32} 
+# aType = CUDA.functional() ? CuArray{Float32} : Array{Float32} 
+
+function normal_init(a...; mean=0.0, std=0.1)
+    w = randn(a...)
+    if ndims(w) == 1
+        fanin = length(w)
+    elseif ndims(w) == 2
+        fanin = size(w,2)
+    else
+        fanin = div(length(w),  a[end])
+    end
+    T = eltype(w)
+    w .* T(std / sqrt(fanin)) .+ T(mean)
+end
+init_f = normal_init
 
 mmul(w,x) = (w == 1 ? x : w == 0 ? 0 : reshape(w * reshape(x,size(x,1),:), (:, size(x)[2:end]...)))
-std2(a, μ, ϵ) = sqrt.(Knet.mean(abs2.(a .- μ), dims=1) .+ ϵ)
+# std2(a, μ, ϵ) = sqrt.(mean(abs2.(a .- μ), dims=1) .+ ϵ)
 
 struct Embed; w; end
 
@@ -28,36 +46,47 @@ function (l::Linear)(x)
     mmul(l.w, x) .+ l.b
 end
 
-struct LayerNorm
-    γ
-    β
-    ϵ
+
+"""
+    LayerNorm(size::Integer; eps=1e-5)
+    LayerNorm(γ, β, ϵ)
+
+References:
+* [Ba, Kiros and Hinton 2016](https://arxiv.org/abs/1607.06450) Layer Normalization
+* torch.nn.LayerNorm
+* tf.keras.layers.LayerNormalization
+"""
+struct LayerNorm; γ; β; ϵ; end
+
+function LayerNorm(dmodel; eps=1e-5)
+    γ = param(dmodel; init=ones, atype=aType)
+    β = param(dmodel; init=zeros, atype=aType)
+    LayerNorm(γ, β, eps)
 end
 
-LayerNorm(hidden_size::Int; eps=1e-12) = LayerNorm(Param(aType(ones(hidden_size))), param0(hidden_size, atype=aType), eps)
-
-function (n::LayerNorm)(x)
-    μ = Knet.mean(x, dims=1)
-    x = (x .- μ) ./ std2(x, μ, n.ϵ) # corrected=false for n
-    return n.γ .* x .+ n.β
+function (l::LayerNorm)(x, o...)
+    μ = mean(x,dims=1)
+    σ = std(x,mean=μ,dims=1)
+    ϵ = eltype(x)(l.ϵ)
+    l.γ .* (x .- μ) ./ (σ .+ ϵ) .+ l.β # TODO: doing x .- μ twice?
 end
 
 """
     gelu(x)
     
-    Gaussian Error Linear Unit Activation Function
-    https://arxiv.org/abs/1606.08415
-    returns: 
-        x * sigm(1.702 * x)
+Gaussian Error Linear Unit Activation Function
+https://arxiv.org/abs/1606.08415
+returns: 
+    x * sigm(1.702 * x)
 """
 function gelu(x)
-    return x * sigm(1.702 * x)
+    return x * sigm(Float32(1.702) * x)
 end
 
 struct Boom
     lin1
     lin2
-    dropout
+    dropout::Float32
     shortcut
     act
 end
@@ -211,7 +240,7 @@ function SHARNNBlock(embed_dim, hidden_dim; heads=1, dropout=0.0, residual=true,
     end
 
     ff = Boom(embed_dim; dim_feedforward=hidden_dim, dropout=dropout, shortcut=true, act=gelu)
-    rnn = RNN(embed_dim, embed_dim)
+    rnn = RNN(embed_dim, embed_dim, atype=aType)
     lnstart = LayerNorm(embed_dim, eps=1e-12)
     lnff = LayerNorm(embed_dim, eps=1e-12)
     lnxff = LayerNorm(embed_dim, eps=1e-12)
@@ -220,8 +249,8 @@ function SHARNNBlock(embed_dim, hidden_dim; heads=1, dropout=0.0, residual=true,
 end
 
 function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
-    h = b.lnstart(h)
-    
+    h = b.lnstart(h); 
+
     # RNN part
     if hidden !== nothing
         b.rnn.h, b.rnn.c = hidden
@@ -235,6 +264,7 @@ function (b::SHARNNBlock)(h, p_encoding, attn_mask; mem=nothing, hidden=nothing)
     h = b.residual ? (h + x) : x  
 
     # Attention part
+    
     focus, new_mem = nothing, []
     if b.attn !== nothing
         if mem !== nothing
@@ -278,16 +308,18 @@ end
 function SHARNN(embsz::Int, hidden::Int, vocab::Vocab, nlayers::Int; num_max_positions=1024, nheads=1, dropout=0.0, dropouth=0.1, dropouti=0.1, wdrop=0, tie_weights=false)
     
     encoder = Embed(length(vocab.i2v), embsz)
-    decoder = Linear(embsz, length(vocab.i2v))
+    
     pos_emb = zeros(num_max_positions)
 
     if tie_weights
-        decoder.w = encoder.w
+        decoder = nothing
+    else
+        decoder = Linear(embsz, length(vocab.i2v))
     end
 
     blocks = []
     for i=1:nlayers
-        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=true)) # (i == (nlayers - 1))
+        push!(blocks, SHARNNBlock(embsz, hidden; heads=nheads, dropout=dropouth, residual=false, use_attn=(i == (nlayers - 1)))) # (i == (nlayers - 1))
     end
 
     SHARNN(encoder, decoder, vocab, blocks, dropouti, dropout, dropouth, num_max_positions, pos_emb, nothing, nothing)
@@ -329,7 +361,13 @@ function (s::SHARNN)(src, tgt; average=true)
     h, new_hidden, new_mems = s(src; hidden=s.new_hidden, mems=s.new_mems) 
     s.new_hidden = new_hidden
     s.new_mems = new_mems
-    scores = s.decoder(h)
+    
+    if s.decoder !== nothing
+        scores = s.decoder(h)
+    else
+        scores = mmul(s.encoder.w', h)
+    end
+    
     nll(scores, tgt; dims=1, average=average)
 end
 

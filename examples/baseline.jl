@@ -50,12 +50,12 @@ model = SimpleLSTMModel(em_size, hidden_size, vocab; layers=layers, dropout=0.2)
 
 println()
 @info "Starting training, total iteration no: $(length(trn))"
-bestmodel = train!(model, trn, dev)
+bestmodel = trainadam!(model, trn, dev)
 
-println()
-@info "Finished training, Starting evaluation ..."
-trnloss = loss(bestmodel, dtrn);
-println("Training set scores:       ", report(trnloss))
+# println()
+# @info "Finished training, Starting evaluation ..."
+# trnloss = loss(bestmodel, dtrn);
+# println("Training set scores:       ", report(trnloss))
 devloss = loss(bestmodel, ddev);
 println("Development set scores:    ", report(devloss))
 testloss = loss(bestmodel, dtst);

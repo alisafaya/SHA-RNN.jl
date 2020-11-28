@@ -14,15 +14,15 @@ function evaluate()
     testloss = loss(model, dtst);
     println("Test set scores:           ", report_lm(testloss))
 
-    model_name = "full_main.jld2"
+    model_name = "small_mel.jld2"
     @info "Saving the model as $(model_name)"
     Knet.save(model_name, "model", model);
 end
 
-BATCHSIZE = 8 ; @show BATCHSIZE
-BPTT = 1024 ; @show BPTT
-MEMSIZE = 5000 ; @show MEMSIZE
-EMSIZE = 1024 ; @show EMSIZE
+BATCHSIZE = 3 ; @show BATCHSIZE
+BPTT = 256 ; @show BPTT
+MEMSIZE = 512 ; @show MEMSIZE
+EMSIZE = 512 ; @show EMSIZE
 
 datadir = "../data/enwik8"
 jld2dir = "../jld2/enwik8.jld2"
@@ -54,7 +54,7 @@ end;
 
 println()
 @info "Initializing the model and collecting training data..."
-epochs, em_size, hidden_size, layers = 2, EMSIZE, (EMSIZE*4), 4
+epochs, em_size, hidden_size, layers = 2, EMSIZE, (EMSIZE*4), 1
 println("embedding size: ", em_size)
 println("hidden size: ", hidden_size)
 println("layers: ", layers)
@@ -67,8 +67,8 @@ dev = collect(ddev)
 mintrn = ctrn[1:20];
 
 model = SHARNN(em_size, hidden_size, vocab, layers; num_max_positions=MEMSIZE, tie_weights=true);
-# halfdownlr(model)
-# model = Knet.load("full_main.jld2", "model")
+
+# model = Knet.load("small_model.jld2", "model")
 
 @show length(ctrn)
 
@@ -79,6 +79,7 @@ println()
 @info "Starting training, total iteration no: $(length(trn))"
 initlamb!(model, length(trn); lr=0.002, warmup=(1200)/length(trn))
 
-model = train!(model, trn, dev, mintrn; report_iter=length(ctrn), update_per_n_batch=2)
+#  TODO: stop training at anytime using CTRL-C
+model = train!(model, trn, dev, mintrn; report_iter=length(ctrn), update_per_n_batch=1)
 
 atexit(evaluate)

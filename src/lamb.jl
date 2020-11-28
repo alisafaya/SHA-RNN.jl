@@ -8,6 +8,7 @@
 import Knet: update!
 using AutoGrad: full
 using LinearAlgebra
+using CUDA
 
 warmup_cosine(x, warmup=0.002) = x < warmup ? x/warmup : 0.5 * (1.0 + cos(π * x))
 warmup_constant(x, warmup=0.002) = x < warmup ? x/warmup : 1.0
@@ -41,10 +42,10 @@ function initlamb!(model, t_total; min_trust=0.25, lr=0.001, warmup=0.1, schedul
     end
 end
 
-for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64})
+for T in (Array{Float32},Array{Float64},KnetArray{Float32},KnetArray{Float64},CuArray{Float32},CuArray{Float64})
     @eval begin
         function update!(w::$T, g, p::MinTrustLAMB)
-            Knet.gclip!(g, p.gclip)
+            Knet.Train20.gclip!(g, p.gclip)
             g = full(g)
             if p.fstm===nothing; p.fstm=zero(w); p.scndm=zero(w); end
             p.t += 1

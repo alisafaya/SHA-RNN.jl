@@ -1,9 +1,8 @@
-using Knet, Dates
+using Knet, Dates, Statistics
 
 include("data.jl")
 include("model.jl")
 include("lamb.jl")
-include("bertadam.jl")
 
 function loss(model, data; average=true)    
     total_length = 0
@@ -42,12 +41,13 @@ function trainadam!(model, trn, dev, tst...; report_iter=300)
 end;
 
 
-# Doesn't initialize optimizer
+# this function doesn't initialize optimizer
 function train!(model, dtrn, ddev, p...; report_iter=300, update_per_n_batch=1)
     losses = []
     model_name = "model_$(Int(time()÷1)).jld2"
     bestmodel = deepcopy(model)
-    bestloss = 10 # loss(model, ddev)
+#     bestloss = loss(model, ddev)
+    bestloss = 10
 
     for p in params(model)
         p.opt.t = 0
@@ -85,7 +85,7 @@ function train!(model, dtrn, ddev, p...; report_iter=300, update_per_n_batch=1)
         push!(losses, value(J))
         if k % (report_iter ÷ 50) == 0
             print(Dates.format(now(), "HH:MM:SS"), "  ->  ")
-            println("$k iter: Train scores (loss, ppl, bpc): ", report_lm(Knet.mean(losses)))
+            println("$k iter: Train scores (loss, ppl, bpc): ", report_lm(mean(losses)))
             losses = []
             flush(stdout)
         end
